@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 import json
 import urllib.request
-import urllib.error
 import sys
 import os
 import time
-import subprocess
 
-# --- НАСТРОЙКИ ---
 # Включает подробный вывод в терминал для проверки
 DEBUG = False
 
 # Автоматическое определение города (True/False)
-AUTO_DETECT = False
+AUTO_DETECT = True
 
 # Координаты по умолчанию, используются если AUTO_DETECT = False
-DEFAULT_LAT = "55.75"
-DEFAULT_LON = "37.61"
+DEFAULT_LAT = "52.54"
+DEFAULT_LON = "85.21"
 
 CACHE_FILE = os.path.expanduser("./weather_location.json")
-VPN_INTERFACES = ["tun", "wg", "ppp", "proton"]
+LOCATION_UPDATE_INTERVAL = 14400
 
 
 def log(msg):
@@ -61,58 +58,32 @@ def get_condition_text(code):
     return mapping.get(code, "unknown")
 
 
-def is_gnome_proxy_active():
-    try:
-        result = subprocess.run(
-            ["gsettings", "get", "org.gnome.system.proxy", "mode"],
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout.strip().replace("'", "") != "none":
-            log("GNOME Proxy detected")
-            return True
-    except:
-        pass
-    return False
-
-
-def is_vpn_interface_active():
-    try:
-        if os.path.exists("/sys/class/net/"):
-            for iface in os.listdir("/sys/class/net/"):
-                for key in VPN_INTERFACES:
-                    if key in iface:
-                        with open(f"/sys/class/net/{iface}/operstate", "r") as f:
-                            if f.read().strip() != "down":
-                                log(f"VPN Interface detected: {iface}")
-                                return True
-    except:
-        pass
-    return False
-
-
 def get_location_from_ip():
-    log("Requesting IP location...")
+    log("Requesting IP location (via Direct Route)...")
     try:
+        # Этот запрос должен уйти в обход VPN благодаря настройке Throne
         url = "http://ip-api.com/json/"
         with urllib.request.urlopen(url, timeout=3) as response:
             data = json.load(response)
             if data["status"] == "success":
-                log(f"API returned: {data.get('city')}")
+                log(f"API found: {data.get('city')} ({data['lat']}, {data['lon']})")
                 return str(data["lat"]), str(data["lon"]), data.get("city", "Unknown")
     except Exception as e:
-        log(f"API Error: {e}")
+        log(f"Location API Error: {e}")
     return None
 
 
 def update_location_cache():
-    if not AUTO_DETECT:
-        return
+    # Проверяем, не слишком ли стар кэш
+    if os.path.exists(CACHE_FILE):
+        try:
+            mtime = os.path.getmtime(CACHE_FILE)
+            if (time.time() - mtime) < LOCATION_UPDATE_INTERVAL:
+                return
+        except:
+            pass
 
-    if is_gnome_proxy_active() or is_vpn_interface_active():
-        log("VPN active. Skipping update.")
-        return
-
+    # Если кэш старый или его нет — обновляем
     loc_data = get_location_from_ip()
     if loc_data:
         lat, lon, city = loc_data
@@ -122,17 +93,17 @@ def update_location_cache():
                 json.dump(
                     {"lat": lat, "lon": lon, "city": city, "timestamp": time.time()}, f
                 )
-            log("Cache updated")
+            log("Cache updated with new coordinates")
         except:
             pass
 
 
 def get_coords():
     if not AUTO_DETECT:
-        log(f"Auto-detect OFF. Using default: {DEFAULT_LAT}, {DEFAULT_LON}")
         return DEFAULT_LAT, DEFAULT_LON
 
     update_location_cache()
+
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
@@ -146,6 +117,7 @@ def get_coords():
 
 def get_weather():
     lat, lon = get_coords()
+
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&wind_speed_unit=ms"
 
     try:
@@ -159,7 +131,7 @@ def get_weather():
             print(f"{sign}{temp:.0f}°c {cond}")
 
     except Exception as e:
-        log(f"Weather Error: {e}")
+        log(f"Weather API Error: {e}")
         print("offline")
 
 
