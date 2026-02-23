@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import json
-import urllib.request
-import sys
 import os
+import sys
 import time
+import urllib.request
 
 # Включает подробный вывод в терминал для проверки
 DEBUG = False
+
+# Повторы запроса погоды при временных сбоях
+WEATHER_RETRY_COUNT = 3
+WEATHER_RETRY_DELAY_SEC = 1.5
 
 # Автоматическое определение города (True/False)
 AUTO_DETECT = True
@@ -120,19 +124,23 @@ def get_weather():
 
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&wind_speed_unit=ms"
 
-    try:
-        with urllib.request.urlopen(url, timeout=5) as response:
-            data = json.load(response)
-            curr = data.get("current", {})
-            temp = curr.get("temperature_2m", 0)
-            cond = get_condition_text(curr.get("weather_code", 0))
+    for attempt in range(1, WEATHER_RETRY_COUNT + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                data = json.load(response)
+                curr = data.get("current", {})
+                temp = curr.get("temperature_2m", 0)
+                cond = get_condition_text(curr.get("weather_code", 0))
 
-            sign = "+" if temp > 0 else ""
-            print(f"{sign}{temp:.0f}°c {cond}")
-
-    except Exception as e:
-        log(f"Weather API Error: {e}")
-        print("offline")
+                sign = "+" if temp > 0 else ""
+                print(f"{sign}{temp:.0f}°c {cond}")
+                return
+        except Exception as e:
+            log(f"Weather API Error (attempt {attempt}/{WEATHER_RETRY_COUNT}): {e}")
+            if attempt < WEATHER_RETRY_COUNT:
+                time.sleep(WEATHER_RETRY_DELAY_SEC)
+            else:
+                print("offline")
 
 
 if __name__ == "__main__":
