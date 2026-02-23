@@ -77,7 +77,6 @@ def create_composite_image(raw_cover_path, title, artist):
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, CANVAS_WIDTH, CANVAS_HEIGHT)
     ctx = cairo.Context(surface)
 
-    # 1. Рисуем обложку со скруглением
     if raw_cover_path and os.path.exists(raw_cover_path):
         try:
             temp_png = os.path.join(CACHE_DIR, "temp_cover.png")
@@ -162,8 +161,7 @@ def main():
 
     final_img = create_composite_image(raw_cover, title, artist)
 
-    # Сдвигаем плеер вниз на Y=650, чтобы освободить место для колец (Y=480..610)
-    print(f"${{image {final_img} -p 450,580 -s {CANVAS_WIDTH}x{CANVAS_HEIGHT}}}")
+    print(f"${{image {final_img} -p 170,540 -s {CANVAS_WIDTH}x{CANVAS_HEIGHT}}}")
 
 
 if __name__ == "__main__":

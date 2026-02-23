@@ -89,18 +89,14 @@ def draw():
             ctx.arc(cx, cy, radius, start_angle, progress_end)
             ctx.stroke()
 
-        # Текст: Значение (Внутри кольца, по центру)
         draw_text_centered(ctx, f"{int(value)}%", cx, cy + 2, 12, "Medium")
 
-        # Текст: Название (Снизу под кольцом)
-        # cy + radius + 20px отступ
         draw_text_centered(ctx, label, cx, cy + radius + 20, 12, "Bold")
 
     cleanup_old_files()
     surface.write_to_png(filename)
 
-    # Сдвигаем кольца вниз на Y=480, чтобы дать место длинной погоде
-    print(f"${{image {filename} -p 450,430 -s {WIDTH}x{HEIGHT}}}")
+    print(f"${{image {filename} -p 150,400 -s {WIDTH}x{HEIGHT}}}")
 
 
 if __name__ == "__main__":
