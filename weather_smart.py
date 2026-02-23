@@ -5,10 +5,11 @@ import sys
 import time
 import urllib.request
 import cairo
-import math
+import subprocess
+from datetime import datetime
 
 # --- НАСТРОЙКИ ---
-DEBUG = False
+DEBUG = True
 WEATHER_RETRY_COUNT = 3
 WEATHER_RETRY_DELAY_SEC = 1.5
 AUTO_DETECT = True
@@ -23,37 +24,180 @@ TMP_DIR = "/tmp"
 IMG_WIDTH = 900
 IMG_HEIGHT = 100
 FONT_MAIN = "Clash Display"
-COLOR_PRIMARY = (224 / 255, 152 / 255, 122 / 255)  # #E0987A
+COLOR_PRIMARY_HEX = "#E0987A"
+COLOR_PRIMARY_RGB = (224 / 255, 152 / 255, 122 / 255)
 
-WEATHER_CODES = {
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ICONS_DIR = os.path.join(SCRIPT_DIR, "weather_icons")
+
+# Маппинг кодов
+WEATHER_ICONS_MAP = {
+    # 0-9: Явления без осадков (облачность, дым, пыль)
+    0: ("wi-day-sunny", "wi-night-clear"),
+    1: ("wi-day-cloudy-high", "wi-night-alt-cloudy-high"),
+    2: (
+        "wi-day-sunny-overcast",
+        "wi-night-alt-partly-cloudy",
+    ),  # Идеально для "переменной облачности"
+    3: ("wi-cloudy", "wi-cloudy"),
+    4: ("wi-smoke", "wi-smoke"),
+    5: ("wi-day-haze", "wi-night-fog"),
+    6: ("wi-dust", "wi-dust"),
+    7: ("wi-dust", "wi-dust"),
+    8: ("wi-sandstorm", "wi-sandstorm"),
+    9: ("wi-sandstorm", "wi-sandstorm"),
+    # 10-19: Мгла, туман, шквалы и молнии
+    10: ("wi-day-fog", "wi-night-fog"),
+    11: ("wi-fog", "wi-night-fog"),
+    12: ("wi-fog", "wi-night-fog"),
+    13: ("wi-day-lightning", "wi-night-alt-lightning"),
+    14: ("wi-day-sprinkle", "wi-night-alt-sprinkle"),
+    15: ("wi-day-showers", "wi-night-alt-showers"),
+    16: ("wi-day-showers", "wi-night-alt-showers"),
+    17: ("wi-day-lightning", "wi-night-alt-lightning"),
+    18: ("wi-day-cloudy-gusts", "wi-night-alt-cloudy-gusts"),  # Шквалы
+    19: ("wi-tornado", "wi-tornado"),
+    # 20-29: Осадки или туман за последний час
+    20: ("wi-day-sprinkle", "wi-night-alt-sprinkle"),
+    21: ("wi-day-rain", "wi-night-alt-rain"),
+    22: ("wi-day-snow", "wi-night-alt-snow"),
+    23: ("wi-day-rain-mix", "wi-night-alt-rain-mix"),
+    24: ("wi-day-sleet", "wi-night-alt-sleet"),
+    25: ("wi-day-showers", "wi-night-alt-showers"),
+    26: ("wi-day-snow", "wi-night-alt-snow"),
+    27: ("wi-day-hail", "wi-night-alt-hail"),
+    28: ("wi-fog", "wi-night-fog"),
+    29: ("wi-day-thunderstorm", "wi-night-alt-thunderstorm"),
+    # 40-49: Туман (различной интенсивности)
+    41: ("wi-fog", "wi-night-fog"),
+    45: ("wi-fog", "wi-night-fog"),
+    48: ("wi-fog", "wi-night-fog"),
+    # 50-59: Морось и изморозь
+    51: ("wi-raindrops", "wi-raindrops"),  # Отличная иконка для легкой мороси
+    53: ("wi-day-sprinkle", "wi-night-alt-sprinkle"),
+    55: ("wi-day-rain", "wi-night-alt-rain"),
+    56: ("wi-day-sleet", "wi-night-alt-sleet"),
+    57: ("wi-day-sleet", "wi-night-alt-sleet"),
+    # 60-69: Дождь
+    61: ("wi-day-showers", "wi-night-alt-showers"),
+    63: ("wi-day-rain", "wi-night-alt-rain"),
+    65: ("wi-day-rain-wind", "wi-night-alt-rain-wind"),
+    66: ("wi-day-rain-mix", "wi-night-alt-rain-mix"),
+    67: ("wi-day-sleet-storm", "wi-night-alt-sleet-storm"),
+    # 70-79: Снег
+    71: ("wi-day-snow", "wi-night-alt-snow"),
+    73: ("wi-snow", "wi-snow"),
+    75: ("wi-day-snow-wind", "wi-night-alt-snow-wind"),
+    77: ("wi-snowflake-cold", "wi-snowflake-cold"),
+    # 80-99: Ливни и грозы
+    80: ("wi-day-showers", "wi-night-alt-showers"),
+    81: ("wi-day-storm-showers", "wi-night-alt-storm-showers"),
+    82: ("wi-day-storm-showers", "wi-night-alt-storm-showers"),
+    85: ("wi-day-snow", "wi-night-alt-snow"),
+    86: ("wi-day-snow-wind", "wi-night-alt-snow-wind"),
+    87: ("wi-day-hail", "wi-night-alt-hail"),
+    89: ("wi-day-hail", "wi-night-alt-hail"),
+    95: ("wi-day-thunderstorm", "wi-night-alt-thunderstorm"),
+    96: ("wi-day-snow-thunderstorm", "wi-night-alt-snow-thunderstorm"),
+    99: ("wi-day-snow-thunderstorm", "wi-night-alt-snow-thunderstorm"),
+    # === КАСТОМНЫЕ КОДЫ (100+) ДЛЯ ЭКСТРЕМАЛЬНЫХ И СПЕЦИАЛЬНЫХ ЯВЛЕНИЙ ===
+    100: ("wi-smog", "wi-smog"),
+    101: ("wi-hurricane", "wi-hurricane"),
+    102: ("wi-volcano", "wi-volcano"),
+    103: ("wi-earthquake", "wi-earthquake"),
+    104: ("wi-flood", "wi-flood"),
+    105: ("wi-tsunami", "wi-tsunami"),
+    106: ("wi-fire", "wi-fire"),
+    107: ("wi-meteor", "wi-meteor"),
+    108: ("wi-alien", "wi-alien"),  # Пасхалка / Неопознанное атмосферное явление
+    109: ("wi-solar-eclipse", "wi-lunar-eclipse"),  # Затмения (дневное/ночное)
+    110: ("wi-hot", "wi-hot"),
+    111: ("wi-strong-wind", "wi-strong-wind"),
+    112: (
+        "wi-small-craft-advisory",
+        "wi-small-craft-advisory",
+    ),  # Предупреждение для малых судов
+    113: ("wi-gale-warning", "wi-gale-warning"),  # Штормовое предупреждение (ветер)
+    114: ("wi-storm-warning", "wi-storm-warning"),  # Штормовое предупреждение (буря)
+    115: ("wi-hurricane-warning", "wi-hurricane-warning"),  # Угроза урагана
+}
+
+# Расширенные описания
+WEATHER_CODES_DESC = {
     0: "Clear sky",
     1: "Mainly clear",
     2: "Partly cloudy",
     3: "Overcast",
+    4: "Smoke",
+    5: "Haze",
+    6: "Widespread dust",
+    7: "Dust or sand raised by wind",
+    8: "Well developed dust whirls",
+    9: "Sandstorm",
+    10: "Mist",
+    11: "Patches of shallow fog",
+    12: "Continuous shallow fog",
+    13: "Lightning visible, no thunder",
+    14: "Precipitation within sight",
+    15: "Precipitation distant",
+    16: "Precipitation near station",
+    17: "Thunderstorm, no precipitation",
+    18: "Squalls",
+    19: "Tornado / Funnel cloud",
+    20: "Drizzle (past hour)",
+    21: "Rain (past hour)",
+    22: "Snow (past hour)",
+    23: "Rain and snow (past hour)",
+    24: "Freezing drizzle (past hour)",
+    25: "Showers of rain (past hour)",
+    26: "Showers of snow (past hour)",
+    27: "Showers of hail (past hour)",
+    28: "Fog (past hour)",
+    29: "Thunderstorm (past hour)",
+    41: "Patchy fog",
     45: "Fog",
     48: "Depositing rime fog",
-    51: "Drizzle",
-    53: "Drizzle",
-    55: "Drizzle",
-    56: "Freezing Drizzle",
-    57: "Freezing Drizzle",
-    61: "Rain",
-    63: "Rain",
-    65: "Heavy Rain",
-    66: "Freezing Rain",
-    67: "Freezing Rain",
-    71: "Snow",
-    73: "Snow",
-    75: "Heavy Snow",
+    51: "Drizzle: Light",
+    53: "Drizzle: Moderate",
+    55: "Drizzle: Dense intensity",
+    56: "Freezing Drizzle: Light",
+    57: "Freezing Drizzle: Dense intensity",
+    61: "Rain: Slight",
+    63: "Rain: Moderate",
+    65: "Rain: Heavy intensity",
+    66: "Freezing Rain: Light",
+    67: "Freezing Rain: Heavy intensity",
+    71: "Snow fall: Slight",
+    73: "Snow fall: Moderate",
+    75: "Snow fall: Heavy intensity",
     77: "Snow grains",
-    80: "Rain showers",
-    81: "Rain showers",
+    80: "Rain showers: Slight",
+    81: "Rain showers: Moderate",
     82: "Violent showers",
-    85: "Snow showers",
-    86: "Snow showers",
-    95: "Thunderstorm",
-    96: "Thunderstorm",
-    99: "Thunderstorm",
+    85: "Snow showers: Slight",
+    86: "Snow showers: Heavy",
+    87: "Snow pellets showers",
+    89: "Hail showers",
+    95: "Thunderstorm: Slight or moderate",
+    96: "Thunderstorm with slight hail",
+    99: "Thunderstorm with heavy hail",
+    # Спец. коды
+    100: "Heavy Smog",
+    101: "Hurricane",
+    102: "Volcanic Ash",
+    103: "Earthquake",
+    104: "Flood",
+    105: "Tsunami",
+    106: "Wildfire",
+    107: "Meteor strike",
+    108: "Unknown Atmospheric Phenomenon / Alien",
+    109: "Eclipse",
+    110: "Extreme Heat",
+    111: "Strong Gale",
+    112: "Small Craft Advisory",
+    113: "Gale Warning",
+    114: "Storm Warning",
+    115: "Hurricane Warning",
 }
 
 
@@ -62,229 +206,16 @@ def log(msg):
         sys.stderr.write(f"[WeatherDebug] {msg}\n")
 
 
-def draw_sun(ctx, x, y, size, color):
-    """Рисует аккуратное солнце с закругленными лучами"""
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.08)
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-
-    ctx.new_path()
-    ctx.arc(x, y, size * 0.22, 0, 2 * math.pi)
-    ctx.stroke()
-
-    ctx.save()
-    ctx.translate(x, y)
-    for i in range(8):
-        ctx.new_path()
-        ctx.move_to(size * 0.35, 0)
-        ctx.line_to(size * 0.48, 0)
-        ctx.stroke()
-        ctx.rotate(math.pi / 4)
-    ctx.restore()
-
-
-def draw_cloud_shape(ctx, x, y, size):
-    """Рисует идеальный контур облака с помощью кривых Безье"""
-    ctx.new_path()
-    ctx.move_to(x - size * 0.35, y + size * 0.2)
-
-    ctx.curve_to(
-        x - size * 0.5,
-        y + size * 0.2,
-        x - size * 0.5,
-        y - size * 0.1,
-        x - size * 0.2,
-        y - size * 0.05,
-    )
-
-    ctx.curve_to(
-        x - size * 0.2,
-        y - size * 0.35,
-        x + size * 0.25,
-        y - size * 0.35,
-        x + size * 0.25,
-        y - size * 0.05,
-    )
-
-    ctx.curve_to(
-        x + size * 0.5,
-        y - size * 0.05,
-        x + size * 0.5,
-        y + size * 0.2,
-        x + size * 0.35,
-        y + size * 0.2,
-    )
-
-    ctx.close_path()
-
-
-def draw_cloud(ctx, x, y, size, color):
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.08)
-    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-    draw_cloud_shape(ctx, x, y, size)
-    ctx.stroke()
-
-
-def draw_partly_cloudy(ctx, x, y, size, color):
-    ctx.save()
-    draw_sun(ctx, x + size * 0.15, y - size * 0.15, size * 0.75, color)
-    ctx.restore()
-
-    ctx.save()
-    draw_cloud_shape(ctx, x - size * 0.05, y + size * 0.05, size * 0.85)
-    ctx.set_operator(cairo.OPERATOR_CLEAR)
-    ctx.fill_preserve()
-
-    ctx.set_operator(cairo.OPERATOR_OVER)
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.08)
-    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-    ctx.stroke()
-    ctx.restore()
-
-
-def draw_rain_drops(ctx, x, y, size, color):
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.05)
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-
-    # 3 аккуратные, симметричные капли: (смещение_X, начало_Y, конец_Y)
-    drops = [
-        (-0.15, 0.28, 0.42),
-        (0.0, 0.35, 0.49),
-        (0.19, 0.28, 0.42),
-    ]
-    for dx, y1, y2 in drops:
-        ctx.new_path()
-        ctx.move_to(x + size * dx, y + size * y1)
-        ctx.line_to(x + size * (dx - 0.05), y + size * y2)
-        ctx.stroke()
-
-
-def draw_snow_flakes(ctx, x, y, size, color):
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.04)
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-
-    flakes = [(-0.15, 0.35), (0.15, 0.4), (-0.05, 0.6)]
-    for dx, dy in flakes:
-        fx, fy = x + size * dx, y + size * dy
-        r = size * 0.0
-        for i in range(3):
-            ctx.new_path()
-            angle = i * (math.pi / 3)
-            ctx.move_to(fx - r * math.cos(angle), fy - r * math.sin(angle))
-            ctx.line_to(fx + r * math.cos(angle), fy + r * math.sin(angle))
-            ctx.stroke()
-
-
-def draw_bolt(ctx, x, y, size, color):
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.02)
-    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-
-    ctx.new_path()
-    bx, by = x, y + size * 0.15
-    ctx.move_to(bx + size * 0.05, by)
-    ctx.line_to(bx - size * 0.08, by + size * 0.3)
-    ctx.line_to(bx + size * 0.05, by + size * 0.3)
-    ctx.line_to(bx - size * 0.02, by + size * 0.5)
-    ctx.line_to(bx + size * 0.12, by + size * 0.2)
-    ctx.line_to(bx - size * 0.02, by + size * 0.2)
-    ctx.close_path()
-
-    ctx.fill_preserve()
-    ctx.stroke()
-
-
-def draw_cloud_rain(ctx, x, y, size, color):
-    draw_cloud(ctx, x, y - size * 0.05, size * 0.9, color)
-    draw_rain_drops(ctx, x, y, size, color)
-
-
-def draw_cloud_snow(ctx, x, y, size, color):
-    draw_cloud(ctx, x, y - size * 0.05, size * 0.9, color)
-    draw_snow_flakes(ctx, x, y, size, color)
-
-
-def draw_cloud_bolt(ctx, x, y, size, color):
-    draw_cloud(ctx, x, y - size * 0.05, size * 0.9, color)
-    draw_bolt(ctx, x, y, size, color)
-
-
-def draw_cloud_rain_bolt(ctx, x, y, size, color):
-    """Облако, дождь и молния (гроза)"""
-    draw_cloud(ctx, x, y - size * 0.05, size * 0.9, color)
-
-    draw_bolt(ctx, x, y, size * 0.8, color)
-
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.05)
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-    drops = [(-0.2, 0.3, 0.45), (0.2, 0.3, 0.45)]
-    for dx, y1, y2 in drops:
-        ctx.new_path()
-        ctx.move_to(x + size * dx, y + size * y1)
-        ctx.line_to(x + size * (dx - 0.05), y + size * y2)
-        ctx.stroke()
-
-
-def draw_partly_cloudy_rain(ctx, x, y, size, color):
-    """Солнце из-за облака с дождем (кратковременные осадки)"""
-    draw_partly_cloudy(ctx, x, y, size, color)
-    draw_rain_drops(ctx, x - size * 0.05, y + size * 0.05, size * 0.85, color)
-
-
-def draw_partly_cloudy_snow(ctx, x, y, size, color):
-    """Солнце из-за облака со снегом (кратковременный снег)"""
-    draw_partly_cloudy(ctx, x, y, size, color)
-    draw_snow_flakes(ctx, x - size * 0.05, y + size * 0.05, size * 0.85, color)
-
-
-def draw_fog(ctx, x, y, size, color):
-    ctx.set_source_rgb(*color)
-    ctx.set_line_width(size * 0.08)
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-
-    lines = [(-0.15, 0.6, -0.1), (0.0, 0.9, 0.0), (0.15, 0.7, 0.05), (0.3, 0.5, -0.05)]
-    for dy, w_mult, x_offset in lines:
-        ctx.new_path()
-        w = size * w_mult
-        ctx.move_to(x + size * x_offset - w / 2, y + size * dy)
-        ctx.line_to(x + size * x_offset + w / 2, y + size * dy)
-        ctx.stroke()
-
-
-def draw_icon_by_code(ctx, code, x, y, size, color):
-    if code == 0:
-        draw_sun(ctx, x, y, size, color)
-    elif code == 1:
-        draw_partly_cloudy(ctx, x, y, size, color)
-    elif code in [2, 3]:
-        draw_cloud(ctx, x, y, size, color)
-    elif code in [45, 48]:
-        draw_fog(ctx, x, y, size, color)
-    elif code in [51, 53, 55, 61, 63, 65]:
-        draw_cloud_rain(ctx, x, y, size, color)
-    elif code in [80, 81, 82]:
-        draw_partly_cloudy_rain(ctx, x, y, size, color)
-    elif code in [56, 57, 66, 67, 71, 73, 75, 77]:
-        draw_cloud_snow(ctx, x, y, size, color)
-    elif code in [85, 86]:
-        draw_partly_cloudy_snow(ctx, x, y, size, color)
-    elif code in [95, 96, 99]:
-        draw_cloud_rain_bolt(ctx, x, y, size, color)
-    else:
-        draw_cloud(ctx, x, y, size, color)
-
-
+# --- ЛОГИКА ---
 def get_location_from_ip():
     try:
         url = "http://ip-api.com/json/"
         with urllib.request.urlopen(url, timeout=3) as response:
             data = json.load(response)
             if data["status"] == "success":
+                log(
+                    f"Detected location: {data['city']}, {data['country']} (lat: {data['lat']}, lon: {data['lon']})"
+                )
                 return str(data["lat"]), str(data["lon"])
     except:
         pass
@@ -316,7 +247,7 @@ def get_coords():
 
 def get_weather_data():
     lat, lon = get_coords()
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&wind_speed_unit=ms"
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code,is_day&timezone=auto"
     for _ in range(WEATHER_RETRY_COUNT):
         try:
             with urllib.request.urlopen(url, timeout=5) as response:
@@ -324,14 +255,58 @@ def get_weather_data():
                 curr = data.get("current", {})
                 temp = curr.get("temperature_2m", 0)
                 code = curr.get("weather_code", 0)
-                desc = WEATHER_CODES.get(code, "Unknown")
-                return temp, code, desc.lower()
+                is_day = curr.get("is_day", 1)
+                desc = WEATHER_CODES_DESC.get(code, "Unknown")
+                return temp, code, desc, is_day
         except:
             time.sleep(WEATHER_RETRY_DELAY_SEC)
-    return None, None, None
+    return None, None, None, 1
 
 
-def create_weather_image(temp, code, desc):
+def prepare_icon(code, is_day):
+    pair = WEATHER_ICONS_MAP.get(code, ("wi-na", "wi-na"))
+    icon_name = pair[0] if is_day == 1 else pair[1]
+    svg_path = os.path.join(ICONS_DIR, f"{icon_name}.svg")
+
+    if not os.path.exists(svg_path):
+        return None
+
+    try:
+        with open(svg_path, "r") as f:
+            svg_content = f.read()
+
+        colored_svg = svg_content.replace("<svg ", f'<svg fill="{COLOR_PRIMARY_HEX}" ')
+
+        temp_svg = os.path.join(TMP_DIR, "temp_weather_icon.svg")
+        with open(temp_svg, "w") as f:
+            f.write(colored_svg)
+
+        temp_png = os.path.join(TMP_DIR, "temp_weather_icon.png")
+
+        # High Quality Render
+        subprocess.run(
+            [
+                "convert",
+                "-background",
+                "none",
+                "-density",
+                "300",  # Высокое разрешение
+                temp_svg,
+                "-resize",
+                "256x256",  # Большой размер
+                temp_png,
+            ],
+            check=True,
+        )
+
+        return temp_png
+    except Exception as e:
+        if DEBUG:
+            print(f"Icon error: {e}")
+        return None
+
+
+def create_weather_image(temp, code, desc, is_day):
     timestamp = int(time.time())
     filename = os.path.join(TMP_DIR, f"conky_weather_{timestamp}.png")
 
@@ -345,7 +320,9 @@ def create_weather_image(temp, code, desc):
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, IMG_WIDTH, IMG_HEIGHT)
     ctx = cairo.Context(surface)
 
-    ICON_SIZE = 50
+    icon_png_path = prepare_icon(code, is_day)
+
+    ICON_DISPLAY_SIZE = 64
     FONT_SIZE = 48
 
     sign = ""
@@ -363,7 +340,7 @@ def create_weather_image(temp, code, desc):
     PIPE_WIDTH = 2
 
     total_width = (
-        ICON_SIZE
+        ICON_DISPLAY_SIZE
         + GAP_ICON_TEMP
         + ext_temp.width
         + ext_temp.x_bearing
@@ -378,14 +355,30 @@ def create_weather_image(temp, code, desc):
     base_y = (IMG_HEIGHT / 2) + (ext_temp.height / 2) - 8
 
     # 1. Icon
-    icon_x = start_x + ICON_SIZE / 2
-    icon_y = IMG_HEIGHT / 2 - 5
-    draw_icon_by_code(ctx, code, icon_x, icon_y, ICON_SIZE, COLOR_PRIMARY)
+    icon_x = start_x
+    icon_y = (IMG_HEIGHT - ICON_DISPLAY_SIZE) / 2 - 5
 
-    current_x = start_x + ICON_SIZE + GAP_ICON_TEMP
+    if icon_png_path and os.path.exists(icon_png_path):
+        try:
+            img_surf = cairo.ImageSurface.create_from_png(icon_png_path)
+            ctx.save()
+            ctx.translate(icon_x, icon_y)
+
+            # Масштабирование
+            raw_w = img_surf.get_width()
+            scale = ICON_DISPLAY_SIZE / float(raw_w)
+
+            ctx.scale(scale, scale)
+            ctx.set_source_surface(img_surf, 0, 0)
+            ctx.paint()
+            ctx.restore()
+        except:
+            pass
+
+    current_x = start_x + ICON_DISPLAY_SIZE + GAP_ICON_TEMP - 10
 
     # 2. Temp
-    ctx.set_source_rgb(*COLOR_PRIMARY)
+    ctx.set_source_rgb(*COLOR_PRIMARY_RGB)
     ctx.move_to(current_x, base_y)
     ctx.show_text(temp_str)
 
@@ -393,7 +386,7 @@ def create_weather_image(temp, code, desc):
 
     # 3. Separator
     ctx.set_line_width(PIPE_WIDTH)
-    r, g, b = COLOR_PRIMARY
+    r, g, b = COLOR_PRIMARY_RGB
     ctx.set_source_rgba(r, g, b, 0.4)
 
     pipe_h = 40
@@ -405,7 +398,7 @@ def create_weather_image(temp, code, desc):
     current_x += PIPE_WIDTH + GAP_PIPE_DESC
 
     # 4. Description
-    ctx.set_source_rgb(*COLOR_PRIMARY)
+    ctx.set_source_rgb(*COLOR_PRIMARY_RGB)
     ctx.move_to(current_x, base_y)
     ctx.show_text(desc)
 
@@ -414,11 +407,11 @@ def create_weather_image(temp, code, desc):
 
 
 def main():
-    temp, code, desc = get_weather_data()
+    temp, code, desc, is_day = get_weather_data()
     if temp is None:
         return
-    img_path = create_weather_image(temp, code, desc)
-    print(f"${{image {img_path} -p 0,300 -s {IMG_WIDTH}x{IMG_HEIGHT}}}")
+    img_path = create_weather_image(temp, code, desc, is_day)
+    print(f"${{image {img_path} -p 0,300d -s {IMG_WIDTH}x{IMG_HEIGHT}}}")
 
 
 if __name__ == "__main__":
